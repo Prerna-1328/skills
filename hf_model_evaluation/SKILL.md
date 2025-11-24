@@ -367,30 +367,6 @@ python scripts/evaluation_manager.py import-aa \
 
 ### Integration Examples
 
-**CI/CD Pipeline:**
-```yaml
-# .github/workflows/update-evals.yml
-name: Update Evaluations
-on:
-  schedule:
-    - cron: '0 0 * * 0'  # Weekly updates
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Update from Artificial Analysis
-        env:
-          AA_API_KEY: ${{ secrets.AA_API_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          python scripts/evaluation_manager.py import-aa \
-            --creator-slug "${{ github.repository_owner }}" \
-            --model-name "${{ github.event.repository.name }}" \
-            --repo-id "${{ github.repository }}" \
-            --create-pr
-```
-
 **Python Script Integration:**
 ```python
 import subprocess
