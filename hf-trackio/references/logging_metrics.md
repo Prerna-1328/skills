@@ -1,185 +1,206 @@
-# Trackio Integration for logging metrics
+# Logging Metrics with Trackio
 
-**Trackio** is an experiment tracking library that provides real-time metrics visualization for remote training on Hugging Face Jobs infrastructure.
+**Trackio** is a lightweight, free experiment tracking library from Hugging Face. It provides a wandb-compatible API for logging metrics with local-first design.
 
-⚠️ **IMPORTANT**: For Jobs training (remote cloud GPUs):
-- Training happens on ephemeral cloud runners (not your local machine)
-- Trackio syncs metrics to a Hugging Face Space for real-time monitoring
-- Without a Space, metrics are lost when the job completes
-- The Space dashboard persists your training metrics permanently
+- **GitHub**: [gradio-app/trackio](https://github.com/gradio-app/trackio)
+- **Docs**: [huggingface.co/docs/trackio](https://huggingface.co/docs/trackio/index)
 
-## Setting Up Trackio
+## Installation
 
-**Step 1: Add trackio dependency**
-```python
-# /// script
-# dependencies = [
-#     "trl>=0.12.0",
-#     "trackio",  # Required!
-# ]
-# ///
+```bash
+pip install trackio
+# or
+uv pip install trackio
 ```
 
-**Step 2: Create a Trackio Space (one-time setup)**
+## Core API
 
-**Option A: Let Trackio auto-create (Recommended)**
-Pass a `space_id` to `trackio.init()` and Trackio will automatically create the Space if it doesn't exist.
+### Basic Usage
 
-**Option B: Create manually**
-- Create Space via Hub UI at https://huggingface.co/new-space
-- Select Gradio SDK
-- OR use command: `huggingface-cli repo create my-trackio-dashboard --type space --space_sdk gradio`
-
-**Step 3: Initialize Trackio with space_id**
 ```python
 import trackio
 
+# Initialize a run
 trackio.init(
-    project="my-training",
-    space_id="username/trackio",  # CRITICAL for Jobs! Replace 'username' with your HF username
-    config={
-        "model": "Qwen/Qwen2.5-0.5B",
-        "dataset": "trl-lib/Capybara",
-        "learning_rate": 2e-5,
-    }
+    project="my-project",
+    config={"learning_rate": 0.001, "epochs": 10}
+)
+
+# Log metrics during training
+for epoch in range(10):
+    loss = train_epoch()
+    trackio.log({"loss": loss, "epoch": epoch})
+
+# Finalize the run
+trackio.finish()
+```
+
+### Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| `trackio.init(...)` | Start a new tracking run |
+| `trackio.log(dict)` | Log metrics (called repeatedly during training) |
+| `trackio.finish()` | Finalize run and ensure all metrics are saved |
+| `trackio.show()` | Launch the local dashboard |
+| `trackio.sync(...)` | Sync local project to HF Space |
+
+## trackio.init() Parameters
+
+```python
+trackio.init(
+    project="my-project",           # Project name (groups runs together)
+    name="run-name",                # Optional: name for this specific run
+    config={...},                   # Hyperparameters and config to log
+    space_id="username/trackio",    # Optional: sync to HF Space for remote dashboard
+    group="experiment-group",       # Optional: group related runs
 )
 ```
 
-**Step 4: Configure TRL to use Trackio**
+## Local vs Remote Dashboard
+
+### Local (Default)
+
+By default, trackio stores metrics in a local SQLite database and runs the dashboard locally:
+
 ```python
-SFTConfig(
-    report_to="trackio",
+trackio.init(project="my-project")
+# ... training ...
+trackio.finish()
+
+# Launch local dashboard
+trackio.show()
+```
+
+Or from terminal:
+```bash
+trackio show --project my-project
+```
+
+### Remote (HF Space)
+
+Pass `space_id` to sync metrics to a Hugging Face Space for persistent, shareable dashboards:
+
+```python
+trackio.init(
+    project="my-project",
+    space_id="username/trackio"  # Auto-creates Space if it doesn't exist
+)
+```
+
+⚠️ **For remote training** (cloud GPUs, HF Jobs, etc.): Always use `space_id` since local storage is lost when the instance terminates.
+
+### Sync Local to Remote
+
+Sync existing local projects to a Space:
+
+```python
+trackio.sync(project="my-project", space_id="username/my-experiments")
+```
+
+## wandb Compatibility
+
+Trackio is API-compatible with wandb. Drop-in replacement:
+
+```python
+import trackio as wandb
+
+wandb.init(project="my-project")
+wandb.log({"loss": 0.5})
+wandb.finish()
+```
+
+## TRL Integration
+
+When using TRL trainers, set `report_to="trackio"` for automatic metric logging:
+
+```python
+from trl import SFTConfig, SFTTrainer
+import trackio
+
+trackio.init(
+    project="sft-training",
+    space_id="username/trackio",
+    config={"model": "Qwen/Qwen2.5-0.5B", "dataset": "trl-lib/Capybara"}
+)
+
+config = SFTConfig(
+    output_dir="./output",
+    report_to="trackio",  # Automatic metric logging
     # ... other config
 )
-```
 
-**Step 5: Finish tracking**
-```python
+trainer = SFTTrainer(model=model, args=config, ...)
 trainer.train()
-trackio.finish()  # Ensures final metrics are synced
+trackio.finish()
 ```
 
-## What Trackio Tracks
+## What Gets Logged
 
-Trackio automatically logs:
-- ✅ Training loss
-- ✅ Learning rate
-- ✅ GPU utilization
-- ✅ Memory usage
-- ✅ Training throughput
-- ✅ Custom metrics
+With TRL/Transformers integration, trackio automatically captures:
+- Training loss
+- Learning rate
+- Eval metrics
+- Training throughput
 
-## How It Works with Jobs
-
-1. **Training runs** → Metrics logged to local SQLite DB
-2. **Every 5 minutes** → Trackio syncs DB to HF Dataset (Parquet)
-3. **Space dashboard** → Reads from Dataset, displays metrics in real-time
-4. **Job completes** → Final sync ensures all metrics persisted
-
-## Default Configuration Pattern
-
-**Use sensible defaults for trackio configuration unless user requests otherwise.**
-
-### Recommended Defaults
+For manual logging, log any numeric metrics:
 
 ```python
-import trackio
+trackio.log({
+    "train_loss": 0.5,
+    "train_accuracy": 0.85,
+    "val_loss": 0.4,
+    "val_accuracy": 0.88,
+    "epoch": 1
+})
+```
 
+## Grouping Runs
+
+Use `group` to organize related experiments in the dashboard sidebar:
+
+```python
+# Group by experiment type
+trackio.init(project="my-project", name="baseline-v1", group="baseline")
+trackio.init(project="my-project", name="augmented-v1", group="augmented")
+
+# Group by hyperparameter
+trackio.init(project="hyperparam-sweep", name="lr-0.001", group="lr_0.001")
+trackio.init(project="hyperparam-sweep", name="lr-0.01", group="lr_0.01")
+```
+
+## Configuration Best Practices
+
+Keep config minimal — only log what's useful for comparing runs:
+
+```python
 trackio.init(
-    project="qwen-capybara-sft",
-    name="baseline-run",             # Descriptive name user will recognize
-    space_id="username/trackio",     # Default space: {username}/trackio
+    project="qwen-sft-capybara",
+    name="baseline-lr2e5",
     config={
-        # Keep config minimal - hyperparameters and model/dataset info only
         "model": "Qwen/Qwen2.5-0.5B",
         "dataset": "trl-lib/Capybara",
         "learning_rate": 2e-5,
         "num_epochs": 3,
+        "batch_size": 8,
     }
 )
 ```
 
-**Key principles:**
-- **Space ID**: Use `{username}/trackio` with "trackio" as default space name
-- **Run naming**: Unless otherwise specified, name the run in a way the user will recognize
-- **Config**: Keep minimal - don't automatically capture job metadata unless requested
-- **Grouping**: Optional - only use if user requests organizing related experiments
+## Embedding Dashboards
 
-## Grouping Runs (Optional)
+Embed Space dashboards in websites with query parameters:
 
-The `group` parameter helps organize related runs together in the dashboard sidebar. This is useful when user is running multiple experiments with different configurations but wants to compare them together:
-
-```python
-# Example: Group runs by experiment type
-trackio.init(project="my-project", run_name="baseline-run-1", group="baseline")
-trackio.init(project="my-project", run_name="augmented-run-1", group="augmented")
-trackio.init(project="my-project", run_name="tuned-run-1", group="tuned")
+```html
+<iframe 
+  src="https://username-trackio.hf.space/?project=my-project&metrics=train_loss,val_loss&sidebar=hidden" 
+  style="width:1600px; height:500px; border:0;">
+</iframe>
 ```
 
-Runs with the same group name can be grouped together in the sidebar, making it easier to compare related experiments. You can group by any configuration parameter:
-
-```python
-# Hyperparameter sweep - group by learning rate
-trackio.init(project="hyperparam-sweep", run_name="lr-0.001-run", group="lr_0.001")
-trackio.init(project="hyperparam-sweep", run_name="lr-0.01-run", group="lr_0.01")
-```
-
-## Environment Variables for Jobs
-
-You can configure trackio using environment variables instead of passing parameters to `trackio.init()`. This is useful for managing configuration across multiple jobs.
-
-
-
-**`HF_TOKEN`**
-Required for creating Spaces and writing to datasets (passed via `secrets`):
-```python
-hf_jobs("uv", {
-    "script": "...",
-    "secrets": {
-        "HF_TOKEN": "$HF_TOKEN"  # Enables Space creation and Hub push
-    }
-})
-```
-
-### Example with Environment Variables
-
-```python
-hf_jobs("uv", {
-    "script": """
-# Training script - trackio config from environment
-import trackio
-from datetime import datetime
-
-# Auto-generate run name
-timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-run_name = f"sft_qwen25_{timestamp}"
-
-# Project and space_id can come from environment variables
-trackio.init(run_name=run_name, group="SFT")
-
-# ... training code ...
-trackio.finish()
-""",
-    "flavor": "a10g-large",
-    "timeout": "2h",
-    "secrets": {"HF_TOKEN": "$HF_TOKEN"}
-})
-```
-
-**When to use environment variables:**
-- Managing multiple jobs with same configuration
-- Keeping training scripts portable across projects
-- Separating configuration from code
-
-**When to use direct parameters:**
-- Single job with specific configuration
-- When clarity in code is preferred
-- When each job has different project/space
-
-## Viewing the Dashboard
-
-After starting training:
-1. Navigate to the Space: `https://huggingface.co/spaces/username/trackio`
-2. The Gradio dashboard shows all tracked experiments
-3. Filter by project, compare runs, view charts with smoothing
-
+Query parameters:
+- `project`: Filter to specific project
+- `metrics`: Comma-separated metric names to show
+- `sidebar`: `hidden` or `collapsed`
+- `smoothing`: 0-20 (smoothing slider value)
+- `xmin`, `xmax`: X-axis limits
